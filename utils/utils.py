@@ -11,6 +11,7 @@ from xml.etree import ElementTree
 from xml.dom import minidom
 from shutil import copytree
 import fileinput
+import math
 import sys
 
 def copy_occs(root):
@@ -104,6 +105,20 @@ def file_dialog(ui):
     return False
 
 
+def round_significant(value, digits=9):
+    """
+    round to a number of SIGNIFICANT figures, not decimal places
+
+    Inertia components span many orders of magnitude across one robot: a
+    finger knuckle is ~1e-07 kg m^2 where a torso is ~1e-02. Rounding those
+    to a fixed number of decimals keeps several significant figures on the
+    large links and almost none on the small ones.
+    """
+    if value == 0.0 or not math.isfinite(value):
+        return value
+    return round(value, digits - 1 - int(math.floor(math.log10(abs(value)))))
+
+
 def origin2center_of_mass(inertia, center_of_mass, mass):
     """
     convert the moment of the inertia about the world coordinate into
@@ -125,7 +140,7 @@ def origin2center_of_mass(inertia, center_of_mass, mass):
     z = center_of_mass[2]
     translation_matrix = [y**2+z**2, x**2+z**2, x**2+y**2,
                          -x*y, -y*z, -x*z]
-    return [ round(i - mass*t, 6) for i, t in zip(inertia, translation_matrix)]
+    return [ round_significant(i - mass*t) for i, t in zip(inertia, translation_matrix)]
 
 
 def prettify(elem):
