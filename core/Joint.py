@@ -279,5 +279,25 @@ def make_joints_dict(root, msg):
                 msg = joint.name + " doesn't have joint origin. Please set it and run again."
                 break
         
+        # Guard: two joints sharing a name. joints_dict is keyed by name, so the
+        # second silently replaces the first - that joint disappears from the
+        # URDF, its child link is never written by write_link_urdf, and the
+        # export dies later in write_joint_urdf with a KeyError reported as a
+        # connection problem on an unrelated joint. Fusion permits duplicate
+        # joint names, so it has to be caught here.
+        if joint.name in joints_dict:
+            try:
+                _ui = adsk.core.Application.get().userInterface
+                _ui.activeSelections.clear()
+                _ui.activeSelections.add(joint)
+            except:
+                pass
+            msg = ("Two joints are both named '" + joint.name + "'. Joint names "
+                   "must be unique: the second would silently replace the first, "
+                   "and the link it drives would be missing from the URDF. "
+                   "Rename one of them (the duplicate is selected in the browser) "
+                   "and run again.")
+            break
+
         joints_dict[joint.name] = joint_dict
     return joints_dict, msg
