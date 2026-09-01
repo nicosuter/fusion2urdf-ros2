@@ -79,6 +79,7 @@ def run(context):
         Write.write_materials_xacro(joints_dict, links_xyz_dict, inertial_dict, package_name, robot_name, save_dir)
         Write.write_transmissions_xacro(joints_dict, links_xyz_dict, inertial_dict, package_name, robot_name, save_dir)
         Write.write_gazebo_xacro(joints_dict, links_xyz_dict, inertial_dict, package_name, robot_name, save_dir)
+        Write.write_plain_urdf(package_name, robot_name, save_dir)
         Write.write_display_launch(package_name, robot_name, save_dir)
         Write.write_gazebo_launch(package_name, robot_name, save_dir)
 

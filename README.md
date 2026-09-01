@@ -17,6 +17,15 @@ The upstream script crashes with `AttributeError: 'NoneType' object has no attri
 
 End result: the export no longer crashes on common real-world assemblies, and when it does need user intervention it tells you exactly which joint to fix and where.
 
+### Plain URDF bundle
+
+Each successful export also writes `urdf/<robot>.urdf`. The file bundles the
+generated materials, links, joints, transmissions, and Gazebo elements without
+requiring ROS or `xacro` inside Fusion. Mesh references use portable
+`package://<package>/meshes/...` URIs. The exporter validates that the output
+contains no unresolved xacro expressions and that every joint references an
+emitted link before publishing the file.
+
 ## Install
 
 1. Clone or download this repo.
