@@ -11,11 +11,34 @@ The upstream script crashes with `AttributeError: 'NoneType' object has no attri
 
 ### Patches in `core/Joint.py`
 
-1. **Pre-pass deletes fully-dangling ghost joints** (both `occurrenceOne` and `occurrenceTwo` are `None`) automatically when possible. Reports the deleted joint names and asks the user to re-run.
+1. **Pre-pass ignores fully-dangling ghost joints** (both `occurrenceOne` and `occurrenceTwo` are `None`) and reports them. The exporter never deletes CAD objects.
 2. **Silently skips ghost joints that can't be deleted** (e.g. trapped inside read-only derived components) — they contribute nothing to the URDF anyway.
 3. **Helpful error for partially-dangling joints** (exactly one side `None`): names the joint, names which side is bad, names the component the *good* side is attached to, and **selects the joint** in the Fusion browser so you can find it.
 
 End result: the export no longer crashes on common real-world assemblies, and when it does need user intervention it tells you exactly which joint to fix and where.
+
+### Read-only, repeatable mesh export
+
+The exporter asks Fusion to materialise each original occurrence-context body
+as an in-memory temporary BRep, preserving the assembly placement. It does not
+rewrite vertices, origins, or
+transforms; clone bodies; rename components to `old_component`; or delete
+dangling joints. Running it twice must leave the CAD occurrence/joint signature unchanged
+and produce the same link-to-mesh manifest.
+
+Every STL is staged first, checked as a structurally complete binary STL, and
+only then promoted into `meshes/`. Export failures are fatal. The standalone
+URDF is published only after its mesh manifest exactly matches the files
+exported by that run, so stale files cannot hide a missing mesh.
+
+### Plain URDF bundle
+
+Each successful export also writes `urdf/<robot>.urdf`. The file bundles the
+generated materials, links, joints, transmissions, and Gazebo elements without
+requiring ROS or `xacro` inside Fusion. Mesh references use portable
+`package://<package>/meshes/...` URIs. The exporter validates that the output
+contains no unresolved xacro expressions and that every joint references an
+emitted link before publishing the file.
 
 ## Install
 

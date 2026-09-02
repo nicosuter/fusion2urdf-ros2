@@ -5,7 +5,8 @@ Created on Sun May 12 20:46:26 2019
 @author: syuntoku
 """
 
-import adsk, os
+import adsk, copy, os, re
+from xml.etree import ElementTree
 from xml.etree.ElementTree import Element, SubElement
 from . import Link, Joint, launch_templates
 from ..utils import utils
@@ -247,6 +248,184 @@ def write_gazebo_xacro(joints_dict, links_xyz_dict, inertial_dict, package_name,
             f.write('\n')
 
         f.write('</robot>\n')
+
+
+XACRO_NAMESPACE = 'http://www.ros.org/wiki/xacro'
+
+
+def _xacro_name(element):
+    prefix = '{' + XACRO_NAMESPACE + '}'
+    if element.tag.startswith(prefix):
+        return element.tag[len(prefix):]
+    return None
+
+
+def _read_robot_fragment(file_name):
+    root = ElementTree.parse(file_name).getroot()
+    if root.tag != 'robot':
+        raise ValueError('{} does not contain a <robot> root'.format(file_name))
+    return root
+
+
+def _collect_xacro_properties(roots):
+    properties = {}
+    for root in roots:
+        for child in root:
+            if _xacro_name(child) != 'property':
+                continue
+            name = child.attrib.get('name')
+            value = child.attrib.get('value')
+            if not name or value is None:
+                raise ValueError('xacro property is missing name or value')
+            properties[name] = value
+    return properties
+
+
+def _append_plain_children(target, source, allowed_xacro_elements):
+    for child in source:
+        xacro_name = _xacro_name(child)
+        if xacro_name is not None:
+            if xacro_name not in allowed_xacro_elements:
+                raise ValueError(
+                    'unsupported xacro element <xacro:{}> in generated export'
+                    .format(xacro_name)
+                )
+            continue
+        target.append(copy.deepcopy(child))
+
+
+def _expand_xacro_properties(root, properties):
+    def expand(value):
+        if value is None:
+            return None
+        for name, replacement in properties.items():
+            value = value.replace('${' + name + '}', replacement)
+        return value
+
+    for element in root.iter():
+        element.text = expand(element.text)
+        element.tail = expand(element.tail)
+        for name, value in list(element.attrib.items()):
+            element.attrib[name] = expand(value)
+
+
+def _normalise_mesh_uris(root):
+    find_pattern = re.compile(r'^(?:file://)?\$\(find ([^)]+)\)/?(.*)$')
+    for mesh in root.iter('mesh'):
+        filename = mesh.attrib.get('filename')
+        if not filename:
+            continue
+        match = find_pattern.match(filename)
+        if match:
+            package, path = match.groups()
+            mesh.attrib['filename'] = 'package://{}/{}'.format(
+                package, path.lstrip('/')
+            )
+
+
+def _validate_plain_urdf(root, package_name=None, exported_meshes=None):
+    links = [link.attrib.get('name') for link in root.findall('link')]
+    if not links or any(not name for name in links):
+        raise ValueError('plain URDF contains an unnamed link or no links')
+    if len(links) != len(set(links)):
+        raise ValueError('plain URDF contains duplicate link names')
+
+    link_names = set(links)
+    missing_links = set()
+    for joint in root.findall('joint'):
+        parent = joint.find('parent')
+        child = joint.find('child')
+        if parent is None or child is None:
+            raise ValueError(
+                "joint '{}' is missing a parent or child"
+                .format(joint.attrib.get('name', '?'))
+            )
+        for link_name in (parent.attrib.get('link'), child.attrib.get('link')):
+            if link_name not in link_names:
+                missing_links.add(link_name)
+    if missing_links:
+        raise ValueError(
+            'plain URDF references missing links: {}'
+            .format(', '.join(sorted(missing_links)))
+        )
+
+    mesh_names = set()
+    expected_prefix = ('package://' + package_name + '/meshes/'
+                       if package_name is not None else None)
+    for mesh in root.iter('mesh'):
+        filename = mesh.attrib.get('filename')
+        if not filename:
+            raise ValueError('plain URDF contains a mesh without a filename')
+        if expected_prefix is not None and not filename.startswith(expected_prefix):
+            raise ValueError(
+                'mesh URI is not in package {}: {}'.format(package_name, filename)
+            )
+        mesh_names.add(filename.rsplit('/', 1)[-1])
+
+    if exported_meshes is not None:
+        exported_meshes = set(exported_meshes)
+        missing_meshes = sorted(mesh_names - exported_meshes)
+        unexpected_meshes = sorted(exported_meshes - mesh_names)
+        if missing_meshes or unexpected_meshes:
+            raise ValueError(
+                'mesh manifest mismatch; missing={}, unreferenced={}'
+                .format(missing_meshes, unexpected_meshes)
+            )
+
+    for element in root.iter():
+        if _xacro_name(element) is not None:
+            raise ValueError('plain URDF still contains a xacro element')
+        values = [element.text, element.tail] + list(element.attrib.values())
+        for value in values:
+            if value and ('${' in value or '$(find ' in value):
+                raise ValueError(
+                    'plain URDF still contains an unresolved xacro expression: {}'
+                    .format(value)
+                )
+
+
+def write_plain_urdf(package_name, robot_name, save_dir, exported_meshes=None):
+    """Bundle the generated xacro fragments into a standalone ROS URDF."""
+    urdf_dir = os.path.join(save_dir, 'urdf')
+    xacro_root = _read_robot_fragment(
+        os.path.join(urdf_dir, robot_name + '.xacro')
+    )
+    materials_root = _read_robot_fragment(
+        os.path.join(urdf_dir, 'materials.xacro')
+    )
+    transmissions_root = _read_robot_fragment(
+        os.path.join(urdf_dir, robot_name + '.trans')
+    )
+    gazebo_root = _read_robot_fragment(
+        os.path.join(urdf_dir, robot_name + '.gazebo')
+    )
+    fragment_roots = [
+        xacro_root, materials_root, transmissions_root, gazebo_root
+    ]
+
+    properties = _collect_xacro_properties(fragment_roots)
+    bundled_root = Element('robot', {'name': robot_name})
+    _append_plain_children(bundled_root, materials_root, {'property'})
+    _append_plain_children(bundled_root, xacro_root, {'include'})
+    _append_plain_children(bundled_root, transmissions_root, {'property'})
+    _append_plain_children(bundled_root, gazebo_root, {'property'})
+    _expand_xacro_properties(bundled_root, properties)
+    _normalise_mesh_uris(bundled_root)
+    _validate_plain_urdf(bundled_root, package_name, exported_meshes)
+
+    file_name = os.path.join(urdf_dir, robot_name + '.urdf')
+    temporary_file = file_name + '.tmp'
+    try:
+        with open(temporary_file, mode='w', encoding='utf-8') as f:
+            f.write(utils.prettify(bundled_root))
+        written_root = ElementTree.parse(temporary_file).getroot()
+        _validate_plain_urdf(written_root, package_name, exported_meshes)
+        os.replace(temporary_file, file_name)
+    finally:
+        if os.path.exists(temporary_file):
+            os.remove(temporary_file)
+
+    return file_name
 
 def write_display_launch(package_name, robot_name, save_dir):
     """

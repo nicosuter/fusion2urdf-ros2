@@ -124,28 +124,19 @@ def make_joints_dict(root, msg):
 
     joints_dict = {}
 
-    # Pre-pass: delete fully dangling "ghost" joints. Both sides reference
-    # components that were deleted, so the joint is invisible in the timeline
-    # and browser tree and is always safe to remove.
-    _deleted = []
-    for joint in list(root.joints):
+    # Fully dangling ghosts contribute no link or transform. Do not delete them:
+    # exporting must be read-only and idempotent with respect to the CAD model.
+    _ghosts = []
+    for joint in root.joints:
         try:
-            both_bad = (joint.occurrenceOne is None and
-                        joint.occurrenceTwo is None)
+            if joint.occurrenceOne is None and joint.occurrenceTwo is None:
+                _ghosts.append(joint.name)
         except:
-            both_bad = True
-        if both_bad:
-            name = joint.name
-            try:
-                joint.deleteMe()
-                _deleted.append(name)
-            except:
-                pass
-    if _deleted:
-        msg = ("Removed " + str(len(_deleted)) + " dangling ghost joint(s): "
-               + ', '.join(_deleted) + ". They referenced deleted components "
-               "on both sides. Please run the exporter again.")
-        return joints_dict, msg
+            _ghosts.append(joint.name)
+    if _ghosts:
+        print("[WARN] joints: expected=two live endpoints, got=fully dangling "
+              "ghosts {}, fallback=ignored without changing the CAD"
+              .format(', '.join(_ghosts)), flush=True)
 
     for joint in root.joints:
         joint_dict = {}
@@ -279,5 +270,17 @@ def make_joints_dict(root, msg):
                 msg = joint.name + " doesn't have joint origin. Please set it and run again."
                 break
         
+        if joint.name in joints_dict:
+            try:
+                _ui = adsk.core.Application.get().userInterface
+                _ui.activeSelections.clear()
+                _ui.activeSelections.add(joint)
+            except:
+                pass
+            msg = ("Two joints are both named '" + joint.name + "'. Joint names "
+                   "must be unique: the second would silently replace the first. "
+                   "Rename one of them (the duplicate is selected) and run again.")
+            break
+
         joints_dict[joint.name] = joint_dict
     return joints_dict, msg

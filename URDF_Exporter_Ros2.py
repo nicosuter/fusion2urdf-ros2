@@ -7,6 +7,23 @@ import sys
 from .utils import utils
 from .core import Link, Joint, Write
 
+
+def _cad_signature(root):
+    occurrences = tuple(
+        (occurrence.fullPathName, occurrence.component.name,
+         occurrence.bRepBodies.count,
+         tuple(occurrence.transform2.asArray()),
+         occurrence.isGrounded)
+        for occurrence in root.occurrences
+    )
+    joints = tuple(
+        (joint.name,
+         joint.occurrenceOne.fullPathName if joint.occurrenceOne else None,
+         joint.occurrenceTwo.fullPathName if joint.occurrenceTwo else None)
+        for joint in root.joints
+    )
+    return occurrences, joints, root.bRepBodies.count
+
 """
 # length unit is 'cm' and inertial unit is 'kg/cm^2'
 # If there is no 'body' in the root component, maybe the corrdinates are wrong.
@@ -20,6 +37,8 @@ from .core import Link, Joint, Write
 
 def run(context):
     ui = None
+    root = None
+    before_signature = None
     success_msg = 'Successfully create URDF file'
     msg = success_msg
 
@@ -36,7 +55,7 @@ def run(context):
             return
 
         root = design.rootComponent  # root component
-        components = design.allComponents
+        before_signature = _cad_signature(root)
 
         # set the names
         robot_name = root.name.split()[0]
@@ -88,12 +107,36 @@ def run(context):
         utils.update_setup_cfg(save_dir, package_name)
         utils.update_package_xml(save_dir, package_name)
 
-        # Generate STl files
-        utils.copy_occs(root)
-        utils.export_stl(design, save_dir, components)
+        # Export the original occurrences directly. This must not clone, rename,
+        # delete, or otherwise mutate anything in the CAD document.
+        exported_meshes = utils.export_stl(design, root, save_dir)
+        Write.write_plain_urdf(
+            package_name, robot_name, save_dir, exported_meshes
+        )
+
+        after_signature = _cad_signature(root)
+        if after_signature != before_signature:
+            raise RuntimeError(
+                'Exporter changed CAD names, joint endpoints, body counts, '
+                'occurrence transforms, grounding, or root bodies; output rejected'
+            )
 
         ui.messageBox(msg, title)
 
     except:
         if ui:
             ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
+    finally:
+        if root is not None and before_signature is not None:
+            try:
+                if _cad_signature(root) != before_signature and ui:
+                    ui.messageBox(
+                        'CRITICAL: exporter source-state guard detected a CAD '
+                        'document change. Do not save this document.'
+                    )
+            except Exception:
+                if ui:
+                    ui.messageBox(
+                        'CRITICAL: exporter could not verify the final CAD state. '
+                        'Do not save this document.'
+                    )
