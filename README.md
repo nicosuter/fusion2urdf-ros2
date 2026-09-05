@@ -40,6 +40,31 @@ requiring ROS or `xacro` inside Fusion. Mesh references use portable
 contains no unresolved xacro expressions and that every joint references an
 emitted link before publishing the file.
 
+## Companion script: `Fix_Dangling_Joints`
+
+The exporter never deletes anything, so ghost joints stay in the design and get
+reported on every run. `Fix_Dangling_Joints/` is a separate Fusion script that
+removes them on demand — a deliberate, undoable edit you trigger yourself rather
+than a side effect of exporting.
+
+It deletes, after showing you the list and asking for confirmation:
+
+- **ghost joints** — both endpoints are `None`, so the joint connects nothing.
+- **unreadable joints** — accessing an endpoint raises; this is what makes the
+  exporter crash.
+
+It never deletes **half-dangling joints** (exactly one side `None`, i.e.
+attached to the root component or to ground). Those encode real modelling
+intent, so the script only reports them and selects the first one in the
+browser. Joints it cannot delete — typically inside a derived, read-only
+component — are listed as failures; fix those in the source design.
+
+The script scans every component in the design (both regular and as-built
+joints), and it does not save the document: review the result and save yourself.
+
+Install it like any other script: in Fusion **Utilities → Add-Ins → Scripts**,
+press the green **+**, and point it at the `Fix_Dangling_Joints` folder.
+
 ## Install
 
 1. Clone or download this repo.

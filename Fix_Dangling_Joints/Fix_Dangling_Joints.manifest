@@ -1,0 +1,10 @@
+{
+	"autodeskProduct":	"Fusion360",
+	"type":	"script",
+	"author":	"Elia Huber",
+	"description":	{
+		"":	"Delete dangling ghost joints left behind by deleted components"
+	},
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true
+}
